@@ -30,14 +30,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// statusCmd represents the status command
 var remoteCmd = &cobra.Command{
 	Use:   "remote",
 	Short: "Runs 'git remote' across all sub-directories",
 	Long:  `Runs 'git remote' across all sub-directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
-		// fmt.Printf("%-7s %-50s %-30s %-30s %s\n", "STATUS", "REPOSITORY NAME", "BRANCH", "VERSION", "MESSAGE")
 
 		error := color.FgRed.Render
 
