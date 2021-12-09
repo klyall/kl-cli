@@ -16,6 +16,9 @@ limitations under the License.
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 )
 
@@ -41,4 +44,12 @@ func init() {
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// gitCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+}
+
+func isGitRepository(dir string) bool {
+	gitDir := filepath.Join(dir, ".git")
+
+	_, err := os.ReadDir(gitDir)
+
+	return err == nil
 }

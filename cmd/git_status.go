@@ -57,24 +57,22 @@ var statusCmd = &cobra.Command{
 	Long:  `A longer description that spans multiple lines `,
 	Run: func(cmd *cobra.Command, args []string) {
 
+		fmt.Printf("%-7s %-50s %-30s %-30s %s\n", "STATUS", "REPOSITORY NAME", "BRANCH", "VERSION", "MESSAGE")
+
 		error := color.FgRed.Render
-		warn := color.FgYellow.Render
-		// info := color.FgCyan.Render
-		// pass := color.FgCyan.Render
-		success := color.FgCyan.Render
 
 		rootDir, err := os.Getwd()
+
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		// Find directories
 		entries, err := os.ReadDir(rootDir)
+
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		fmt.Printf("%-7s %-50s %-30s %-30s %s\n", "STATUS", "REPOSITORY NAME", "BRANCH", "VERSION", "MESSAGE")
 
 		// Loop through directories
 		for _, entry := range entries {
@@ -88,69 +86,19 @@ var statusCmd = &cobra.Command{
 			repositoryDir := filepath.Join(rootDir, repositoryName)
 
 			if isGitRepository(repositoryDir) {
-				// fmt.Println(subdirectory)
 
 				out, err := execGitStatus(repositoryDir)
+
 				if err != nil {
-					log.Fatalf("unable to read git repository status : %s", err.Error())
+					message := fmt.Sprintf("%-50s Unable to read git repository: %s", repositoryName, err.Error())
+					printErrorMessage(message)
+					continue
 				}
 
-				status := parseOutput(out)
-				branch = status.LocalBranch
+				repositoryStatus := parseGitStatusOutput(out)
+				branch = repositoryStatus.LocalBranch
 				version = "Unknown"
-				// version = status.RemoteBranch
-
-				var staged, unstaged, untracked, ignored int
-
-				// fmt.Println("Branch is ", status.Branch)
-				for _, fs := range status.FilesStatus {
-					if Verbose {
-						fmt.Println(fs.Text)
-					}
-
-					if fs.Staged {
-						staged++
-					}
-					if fs.Unstaged {
-						unstaged++
-					}
-					if fs.Untracked {
-						untracked++
-					}
-					if fs.Ignored {
-						ignored++
-					}
-				}
-
-				switch {
-				// case len(status.FilesStatus) == 0:
-				// message = success("Up to date")
-				case staged+unstaged > 0:
-					message = "Changes to commit"
-				case strict && untracked > 0:
-					message = "Untracked changes"
-				}
-
-				switch {
-				case status.CommitsAhead > 0:
-					if message != "" {
-						message += ", "
-					}
-
-					message += warn("Changes to push")
-				case status.CommitsBehind > 0:
-					if message != "" {
-						message += ", "
-					}
-
-					message += warn("Changes to pull")
-				}
-
-				if message == "" {
-					message = success("Up to date")
-				} else {
-					message = warn(message)
-				}
+				message = determineMessage(repositoryStatus)
 
 			} else {
 				message = error("Not versioned")
@@ -160,14 +108,6 @@ var statusCmd = &cobra.Command{
 			printSuccessMessage(cliMessage)
 		}
 	},
-}
-
-func isGitRepository(dir string) bool {
-	gitDir := filepath.Join(dir, ".git")
-
-	_, err := os.ReadDir(gitDir)
-
-	return err == nil
 }
 
 // execGitStatus read the git status of the repository located at path
@@ -192,9 +132,7 @@ func execGitStatus(path string) (io.Reader, error) {
 	return bytes.NewReader(out), err
 }
 
-//Parse parses a git status output command
-//It is compatible with the short version of the git status command
-func parseOutput(r io.Reader) RepositoryStatus {
+func parseGitStatusOutput(r io.Reader) RepositoryStatus {
 
 	s := bufio.NewScanner(r)
 
@@ -313,17 +251,66 @@ func parseFileLine(input string) FileStatus {
 	}
 }
 
+func determineMessage(repositoryStatus RepositoryStatus) string {
+	var message string
+
+	staged, unstaged, untracked, _ := calculateTotals(repositoryStatus)
+
+	switch {
+	case staged+unstaged > 0:
+		message = "Changes to commit"
+	case strict && untracked > 0:
+		message = "Untracked changes"
+	}
+
+	switch {
+	case repositoryStatus.CommitsAhead > 0:
+		if message != "" {
+			message += ", "
+		}
+
+		message += warn("Changes to push")
+	case repositoryStatus.CommitsBehind > 0:
+		if message != "" {
+			message += ", "
+		}
+
+		message += warn("Changes to pull")
+	}
+
+	if message == "" {
+		message = success("Up to date")
+	} else {
+		message = warn(message)
+	}
+
+	return message
+}
+
+func calculateTotals(repositoryStatus RepositoryStatus) (staged, unstaged, untracked, ignored int) {
+	for _, fs := range repositoryStatus.FilesStatus {
+		if Verbose {
+			fmt.Println(fs.Text)
+		}
+
+		if fs.Staged {
+			staged++
+		}
+		if fs.Unstaged {
+			unstaged++
+		}
+		if fs.Untracked {
+			untracked++
+		}
+		if fs.Ignored {
+			ignored++
+		}
+	}
+	return
+}
+
 func init() {
 	gitCmd.AddCommand(statusCmd)
 
 	statusCmd.PersistentFlags().BoolVarP(&strict, "strict", "s", false, "treat untracked files as outstanding changes")
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// statusCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// statusCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
