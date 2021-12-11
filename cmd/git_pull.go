@@ -35,7 +35,7 @@ var pullCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 
 		rootDir, err := os.Getwd()
-		rootDir = "/Users/klyall/workspaces/kl"
+
 		if err != nil {
 			log.Fatal(err)
 		}
