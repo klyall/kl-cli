@@ -32,11 +32,31 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type Status struct {
+	color   color.Color
+	message string
+}
+
+var CommittedChanges = Status{warnColor, "Changes to push"}
+var NoChanges = Status{successColor, "Up to date"}
+var NotVersioned = Status{errorColor, "Not versioned"}
+var RemoteChanges = Status{warnColor, "Changes to pull"}
+var UncommitedChanges = Status{warnColor, "Changes to commit"}
+var UntrackedChanges = Status{warnColor, "Untracked changes"}
+
 type RepositoryStatus struct {
+	Versioned     bool
+	VersionNumber string
 	LocalBranch   string
 	RemoteBranch  string
+	LocalStatus   Status
+	RemoteStatus  Status
 	CommitsAhead  int
 	CommitsBehind int
+	Staged        int
+	Unstaged      int
+	Untracked     int
+	Ignored       int
 	FilesStatus   []FileStatus
 }
 
@@ -59,8 +79,6 @@ var statusCmd = &cobra.Command{
 
 		fmt.Printf("%-7s %-50s %-30s %-30s %s\n", "STATUS", "REPOSITORY NAME", "BRANCH", "VERSION", "MESSAGE")
 
-		error := color.FgRed.Render
-
 		rootDir, err := os.Getwd()
 
 		if err != nil {
@@ -81,33 +99,39 @@ var statusCmd = &cobra.Command{
 			}
 
 			repositoryName := entry.Name()
-			var branch, version, message string
-
 			repositoryDir := filepath.Join(rootDir, repositoryName)
 
-			if isGitRepository(repositoryDir) {
+			repositoryStatus, err := ExecuteGitStatus(repositoryDir)
 
-				out, err := execGitStatus(repositoryDir)
-
-				if err != nil {
-					message := fmt.Sprintf("%-50s Unable to read git repository: %s", repositoryName, err.Error())
-					printErrorMessage(message)
-					continue
-				}
-
-				repositoryStatus := parseGitStatusOutput(out)
-				branch = repositoryStatus.LocalBranch
-				version = "Unknown"
-				message = determineMessage(repositoryStatus)
-
-			} else {
-				message = error("Not versioned")
+			if err != nil {
+				message := fmt.Sprintf("%-50s Unable to read git repository: %s", repositoryName, err.Error())
+				printErrorMessage(message)
+				continue
 			}
 
-			cliMessage := fmt.Sprintf("%-50s %-30s %-30s %s", repositoryName, branch, version, message)
-			printSuccessMessage(cliMessage)
+			message := createMessage(repositoryStatus)
+
+			formattedMessage := fmt.Sprintf("%-50s %-30s %-30s %s", repositoryName, repositoryStatus.LocalBranch, repositoryStatus.VersionNumber, message)
+			printSuccessMessage(formattedMessage)
 		}
 	},
+}
+
+func ExecuteGitStatus(repositoryDir string) (RepositoryStatus, error) {
+
+	if !isGitRepository(repositoryDir) {
+		return RepositoryStatus{
+			LocalStatus: NotVersioned,
+		}, nil
+	}
+
+	out, err := execGitStatus(repositoryDir)
+
+	if err != nil {
+		return RepositoryStatus{}, err
+	}
+
+	return parseGitStatusOutput(out), nil
 }
 
 // execGitStatus read the git status of the repository located at path
@@ -150,6 +174,17 @@ func parseGitStatusOutput(r io.Reader) RepositoryStatus {
 		break
 	}
 
+	var remoteStatus Status
+
+	switch {
+	case ahead > 0:
+		remoteStatus = CommittedChanges
+	case behind > 0:
+		remoteStatus = RemoteChanges
+	default:
+		remoteStatus = NoChanges
+	}
+
 	var statuses []FileStatus
 	for s.Scan() {
 		if len(s.Text()) < 1 {
@@ -159,11 +194,31 @@ func parseGitStatusOutput(r io.Reader) RepositoryStatus {
 		statuses = append(statuses, parseFileLine(s.Text()))
 	}
 
+	staged, unstaged, untracked, ignored := calculateTotals(statuses)
+
+	var localStatus Status
+
+	switch {
+	case staged+unstaged > 0:
+		localStatus = UncommitedChanges
+	case strict && untracked > 0:
+		localStatus = UntrackedChanges
+	default:
+		localStatus = NoChanges
+	}
+
 	return RepositoryStatus{
+		Versioned:     true,
 		LocalBranch:   localBranch,
 		RemoteBranch:  remoteBranch,
+		LocalStatus:   localStatus,
+		RemoteStatus:  remoteStatus,
 		CommitsAhead:  ahead,
 		CommitsBehind: behind,
+		Staged:        staged,
+		Unstaged:      unstaged,
+		Untracked:     untracked,
+		Ignored:       ignored,
 		FilesStatus:   statuses,
 	}
 }
@@ -251,44 +306,8 @@ func parseFileLine(input string) FileStatus {
 	}
 }
 
-func determineMessage(repositoryStatus RepositoryStatus) string {
-	var message string
-
-	staged, unstaged, untracked, _ := calculateTotals(repositoryStatus)
-
-	switch {
-	case staged+unstaged > 0:
-		message = "Changes to commit"
-	case strict && untracked > 0:
-		message = "Untracked changes"
-	}
-
-	switch {
-	case repositoryStatus.CommitsAhead > 0:
-		if message != "" {
-			message += ", "
-		}
-
-		message += warn("Changes to push")
-	case repositoryStatus.CommitsBehind > 0:
-		if message != "" {
-			message += ", "
-		}
-
-		message += warn("Changes to pull")
-	}
-
-	if message == "" {
-		message = success("Up to date")
-	} else {
-		message = warn(message)
-	}
-
-	return message
-}
-
-func calculateTotals(repositoryStatus RepositoryStatus) (staged, unstaged, untracked, ignored int) {
-	for _, fs := range repositoryStatus.FilesStatus {
+func calculateTotals(fileStatuses []FileStatus) (staged, unstaged, untracked, ignored int) {
+	for _, fs := range fileStatuses {
 		if Verbose {
 			fmt.Println(fs.Text)
 		}
@@ -307,6 +326,29 @@ func calculateTotals(repositoryStatus RepositoryStatus) (staged, unstaged, untra
 		}
 	}
 	return
+}
+
+func createMessage(repositoryStatus RepositoryStatus) string {
+	var message string
+
+	if repositoryStatus.LocalStatus == NotVersioned ||
+		repositoryStatus.LocalStatus == repositoryStatus.RemoteStatus {
+		return repositoryStatus.LocalStatus.color.Render(repositoryStatus.LocalStatus.message)
+	}
+
+	if repositoryStatus.LocalStatus != NoChanges {
+		message = repositoryStatus.LocalStatus.message
+	}
+
+	if repositoryStatus.RemoteStatus != NoChanges {
+		if message != "" {
+			message += ", "
+		}
+
+		message = repositoryStatus.RemoteStatus.message
+	}
+
+	return warnColor.Render(message)
 }
 
 func init() {

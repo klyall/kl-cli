@@ -6,19 +6,21 @@ import (
 	"github.com/gookit/color"
 )
 
-var warn = color.FgYellow.Render
-var info = color.FgCyan.Render
+var errorColor = color.FgRed
+var warnColor = color.FgYellow
+var infoColor = color.FgCyan
+var passColor = color.FgCyan
+var successColor = color.FgCyan
 
 // pass := color.FgCyan.Render
 var success = color.FgCyan.Render
 
 func printErrorMessage(message string) {
-	error := color.FgRed.Render
-	printMessage(error("ERROR"), message)
+	printMessage(errorColor.Render("ERROR"), message)
 }
 
 func printSuccessMessage(message string) {
-	printMessage(success("SUCCESS"), message)
+	printMessage(successColor.Render("SUCCESS"), message)
 }
 
 func printMessage(status, message string) {

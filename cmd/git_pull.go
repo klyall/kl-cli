@@ -24,29 +24,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
-	"github.com/gookit/color"
 	"github.com/spf13/cobra"
 )
 
-var remoteCmd = &cobra.Command{
-	Use:   "remote",
-	Short: "Runs 'git remote' across all sub-directories",
-	Long:  `Runs 'git remote' across all sub-directories.`,
+var pullCmd = &cobra.Command{
+	Use:   "pull",
+	Short: "Runs 'git pull' across all sub-directories",
+	Long:  `Runs 'git pull' across all sub-directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		error := color.FgRed.Render
-
 		rootDir, err := os.Getwd()
-
+		rootDir = "/Users/klyall/workspaces/kl"
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		// Find directories
 		entries, err := os.ReadDir(rootDir)
-
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -57,34 +52,38 @@ var remoteCmd = &cobra.Command{
 				continue
 			}
 
-			var message string
-
 			repositoryName := entry.Name()
+			var message string
 
 			repositoryDir := filepath.Join(rootDir, repositoryName)
 
-			if isGitRepository(repositoryDir) {
+			repositoryStatus, err := ExecuteGitStatus(repositoryDir)
 
-				out, err := execGitRemote(repositoryDir)
+			if err != nil {
+				message := fmt.Sprintf("%-50s Unable to pull git repository: %s", repositoryName, err.Error())
+				printErrorMessage(message)
+				continue
+			}
+
+			switch {
+			case repositoryStatus.LocalStatus == NotVersioned:
+				message = successColor.Render("Directory is not versioned")
+			case repositoryStatus.LocalStatus == UncommitedChanges:
+				message = errorColor.Render("Uncommited changes prevent pull being done")
+			case repositoryStatus.RemoteStatus == NoChanges:
+				message = successColor.Render("No changes to pull")
+			default:
+				out, err := execGitPull(repositoryDir)
 
 				if err != nil {
-					message := fmt.Sprintf("%-50s Unable to fetch git repository: %s", repositoryName, err.Error())
+					message := fmt.Sprintf("%-50s Unable to pull git repository: %s", repositoryName, err.Error())
 					printErrorMessage(message)
 					continue
 				}
-				fetch, push := parseGitRemoteOutput(out)
 
-				switch {
-				case fetch == "":
-					message = infoColor.Render("No remote")
-				case fetch != push:
-					message = warnColor.Render("Remotes mismatch: %s (fetch) %S (push)", fetch, push)
-				default:
-					message = fetch
-				}
+				parseGitPullOutput(out)
 
-			} else {
-				message = error("Not versioned")
+				message = infoColor.Render("Pull complete")
 			}
 
 			cliMessage := fmt.Sprintf("%-50s %s", repositoryName, message)
@@ -93,15 +92,14 @@ var remoteCmd = &cobra.Command{
 	},
 }
 
-func execGitRemote(path string) (io.Reader, error) {
+func execGitPull(path string) (io.Reader, error) {
 	app := "git"
 
 	arg0 := "-C"
 	arg1 := path
-	arg2 := "remote"
-	arg3 := "-v"
+	arg2 := "pull"
 
-	cmd := exec.Command(app, arg0, arg1, arg2, arg3)
+	cmd := exec.Command(app, arg0, arg1, arg2)
 
 	if Verbose {
 		fmt.Println(cmd)
@@ -112,32 +110,20 @@ func execGitRemote(path string) (io.Reader, error) {
 	return bytes.NewReader(out), err
 }
 
-func parseGitRemoteOutput(r io.Reader) (string, string) {
+func parseGitPullOutput(r io.Reader) {
 
 	s := bufio.NewScanner(r)
 
-	s.Scan()
-	fetch := parseGitRemoteLine(s.Text())
-	s.Scan()
-	push := parseGitRemoteLine(s.Text())
+	if Verbose {
+		s.Scan()
+		line := s.Text()
 
-	return fetch, push
-}
-
-func parseGitRemoteLine(line string) string {
-	if len(line) == 0 {
-		return ""
+		if line != "" {
+			fmt.Println(s.Text())
+		}
 	}
-
-	s := bufio.NewScanner(strings.NewReader(line))
-	s.Split(bufio.ScanWords)
-
-	s.Scan()
-	s.Scan()
-
-	return s.Text()
 }
 
 func init() {
-	gitCmd.AddCommand(remoteCmd)
+	gitCmd.AddCommand(pullCmd)
 }

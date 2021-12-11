@@ -25,7 +25,6 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/gookit/color"
 	"github.com/spf13/cobra"
 )
 
@@ -34,8 +33,6 @@ var fetchCmd = &cobra.Command{
 	Short: "Runs 'git fetch' across all sub-directories",
 	Long:  `Runs 'git fetch' across all sub-directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
-		error := color.FgRed.Render
 
 		rootDir, err := os.Getwd()
 
@@ -72,9 +69,9 @@ var fetchCmd = &cobra.Command{
 
 				parseGitFetchOutput(out)
 
-				message = info("Fetch complete")
+				message = infoColor.Render("Fetch complete")
 			} else {
-				message = error("Not versioned")
+				message = errorColor.Render("Not versioned")
 			}
 
 			cliMessage := fmt.Sprintf("%-50s %s", repositoryName, message)
