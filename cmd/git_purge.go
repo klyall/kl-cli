@@ -29,7 +29,7 @@ var dryRun bool
 var purgeCmd = &cobra.Command{
 	Use:   "purge",
 	Short: "Runs git purge across all sub-directories",
-	Long:  `Runs git purge across all sub-directories to remove all branches that no longer have a remote branch.`,
+	Long:  `Removes all local branches that no longer have a valid remote branch.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
 		rootDir, err := os.Getwd()
