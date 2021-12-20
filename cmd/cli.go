@@ -19,6 +19,10 @@ func printErrorMessage(message string) {
 	printMessage(errorColor.Render("ERROR"), message)
 }
 
+func printWarnMessage(message string) {
+	printMessage(warnColor.Render("WARN"), message)
+}
+
 func printSuccessMessage(message string) {
 	printMessage(successColor.Render("SUCCESS"), message)
 }
