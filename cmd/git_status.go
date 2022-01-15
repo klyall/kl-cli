@@ -16,57 +16,14 @@ limitations under the License.
 package cmd
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"io"
+	"github.com/klyall/kl-cli/pkg/git"
+	"github.com/klyall/kl-cli/pkg/output"
+	"github.com/spf13/cobra"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
-
-	"github.com/gookit/color"
-	"github.com/spf13/cobra"
 )
-
-type Status struct {
-	color   color.Color
-	message string
-}
-
-var CommittedChanges = Status{warnColor, "Changes to push"}
-var NoChanges = Status{successColor, "Up to date"}
-var NotVersioned = Status{errorColor, "Not versioned"}
-var RemoteChanges = Status{warnColor, "Changes to pull"}
-var UncommitedChanges = Status{warnColor, "Changes to commit"}
-var UntrackedChanges = Status{warnColor, "Untracked changes"}
-
-type RepositoryStatus struct {
-	Versioned     bool
-	VersionNumber string
-	LocalBranch   string
-	RemoteBranch  string
-	LocalStatus   Status
-	RemoteStatus  Status
-	CommitsAhead  int
-	CommitsBehind int
-	Staged        int
-	Unstaged      int
-	Untracked     int
-	Ignored       int
-	FilesStatus   []FileStatus
-}
-
-type FileStatus struct {
-	Text      string
-	Staged    bool
-	Unstaged  bool
-	Untracked bool
-	Ignored   bool
-}
 
 var strict bool
 
@@ -77,16 +34,20 @@ var statusCmd = &cobra.Command{
 	Long:  `A longer description that spans multiple lines `,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		fmt.Printf("%-7s %-50s %-30s %-30s %s\n", "STATUS", "REPOSITORY NAME", "BRANCH", "VERSION", "MESSAGE")
-
-		rootDir, err := os.Getwd()
-
-		if err != nil {
-			log.Fatal(err)
+		out := output.SStdOut{
+			Out: os.Stdout,
 		}
 
+		gitStatus := git.Status{
+			Verbose:   Verbose,
+			Outputter: out,
+			Strict:    strict,
+		}
+
+		fmt.Printf("%-7s %-50s %-30s %-30s %s\n", "STATUS", "REPOSITORY NAME", "BRANCH", "VERSION", "MESSAGE")
+
 		// Find directories
-		entries, err := os.ReadDir(rootDir)
+		entries, err := os.ReadDir(WorkingDir)
 
 		if err != nil {
 			log.Fatal(err)
@@ -99,256 +60,60 @@ var statusCmd = &cobra.Command{
 			}
 
 			repositoryName := entry.Name()
-			repositoryDir := filepath.Join(rootDir, repositoryName)
+			repositoryDir := filepath.Join(WorkingDir, repositoryName)
 
-			repositoryStatus, err := ExecuteGitStatus(repositoryDir)
-
+			repositoryStatus, err := ExecuteGitStatus(repositoryDir, gitStatus)
 			if err != nil {
 				message := fmt.Sprintf("%-50s Unable to read git repository: %s", repositoryName, err.Error())
-				printErrorMessage(message)
+				out.Error(message)
 				continue
 			}
 
-			message := createMessage(repositoryStatus)
+			message := createMessage(repositoryStatus, out)
 
 			formattedMessage := fmt.Sprintf("%-50s %-30s %-30s %s", repositoryName, repositoryStatus.LocalBranch, repositoryStatus.VersionNumber, message)
-			printSuccessMessage(formattedMessage)
+			out.Success(formattedMessage)
 		}
 	},
 }
 
-func ExecuteGitStatus(repositoryDir string) (RepositoryStatus, error) {
+func ExecuteGitStatus(repositoryDir string, gitStatus git.Status) (git.RepositoryStatus, error) {
 
 	if !isGitRepository(repositoryDir) {
-		return RepositoryStatus{
-			LocalStatus: NotVersioned,
+		return git.RepositoryStatus{
+			LocalStatus: git.NotVersioned,
 		}, nil
 	}
 
-	out, err := execGitStatus(repositoryDir)
-
+	status, err := gitStatus.Exec(repositoryDir)
 	if err != nil {
-		return RepositoryStatus{}, err
+		return git.RepositoryStatus{}, err
 	}
 
-	return parseGitStatusOutput(out), nil
+	return status, nil
 }
 
-// execGitStatus read the git status of the repository located at path
-func execGitStatus(path string) (io.Reader, error) {
-	app := "git"
-
-	arg0 := "-C"
-	arg1 := path
-	arg2 := "status"
-	arg3 := "-s"
-	arg4 := "-b"
-	arg5 := "--porcelain"
-
-	cmd := exec.Command(app, arg0, arg1, arg2, arg3, arg4, arg5)
-
-	if Verbose {
-		fmt.Println(cmd)
-	}
-
-	out, err := cmd.Output()
-
-	return bytes.NewReader(out), err
-}
-
-func parseGitStatusOutput(r io.Reader) RepositoryStatus {
-
-	s := bufio.NewScanner(r)
-
-	var localBranch, remoteBranch string
-	var ahead, behind int
-
-	//Extract branch name
-	for s.Scan() {
-		//Skip any empty line
-		if len(s.Text()) < 1 {
-			continue
-		}
-
-		localBranch, remoteBranch, ahead, behind = parseBranchLine(s.Text())
-		break
-	}
-
-	var remoteStatus Status
-
-	switch {
-	case ahead > 0:
-		remoteStatus = CommittedChanges
-	case behind > 0:
-		remoteStatus = RemoteChanges
-	default:
-		remoteStatus = NoChanges
-	}
-
-	var statuses []FileStatus
-	for s.Scan() {
-		if len(s.Text()) < 1 {
-			continue
-		}
-
-		statuses = append(statuses, parseFileLine(s.Text()))
-	}
-
-	staged, unstaged, untracked, ignored := calculateTotals(statuses)
-
-	var localStatus Status
-
-	switch {
-	case staged+unstaged > 0:
-		localStatus = UncommitedChanges
-	case strict && untracked > 0:
-		localStatus = UntrackedChanges
-	default:
-		localStatus = NoChanges
-	}
-
-	return RepositoryStatus{
-		Versioned:     true,
-		LocalBranch:   localBranch,
-		RemoteBranch:  remoteBranch,
-		LocalStatus:   localStatus,
-		RemoteStatus:  remoteStatus,
-		CommitsAhead:  ahead,
-		CommitsBehind: behind,
-		Staged:        staged,
-		Unstaged:      unstaged,
-		Untracked:     untracked,
-		Ignored:       ignored,
-		FilesStatus:   statuses,
-	}
-}
-
-func parseBranchLine(input string) (string, string, int, int) {
-	if Verbose {
-		fmt.Println(input)
-	}
-	// Example line:
-	//## develop...origin/develop [ahead 1, behind 18]
-
-	s := bufio.NewScanner(strings.NewReader(input))
-	s.Split(bufio.ScanWords)
-
-	//check if input is a status branch line output
-	s.Scan()
-
-	if s.Text() != "##" {
-		return "", "", 0, 0
-	}
-
-	//read next word and return the branch name(s)
-	s.Scan()
-	b := strings.Split(s.Text(), "...")
-
-	localBranch := b[0]
-	remoteBranch := ""
-
-	if len(b) > 1 {
-		remoteBranch = b[1]
-	}
-
-	var ahead = parseCommitsAhead(input)
-	var behind = parseCommitsBehind(input)
-
-	return localBranch, remoteBranch, ahead, behind
-}
-
-func parseCommitsAhead(input string) int {
-	var r = regexp.MustCompile(`ahead ([0-9]+)`)
-
-	ahead := r.FindStringSubmatch(input)
-	if ahead == nil {
-		return 0
-	}
-
-	i, err := strconv.Atoi(ahead[1])
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(2)
-	}
-
-	return i
-}
-
-func parseCommitsBehind(input string) int {
-	var r = regexp.MustCompile(`behind ([0-9]+)`)
-
-	behind := r.FindStringSubmatch(input)
-	if behind == nil {
-		return 0
-	}
-
-	i, err := strconv.Atoi(behind[1])
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(2)
-	}
-
-	return i
-}
-
-func parseFileLine(input string) FileStatus {
-	staged := input[0] != ' ' && input[0] != '?' && input[0] != '!'
-	unstaged := input[1] != ' ' && input[1] != '?' && input[1] != '!'
-	untracked := strings.HasPrefix(input, "??")
-	ignored := strings.HasPrefix(input, "!!")
-
-	return FileStatus{
-		Text:      input,
-		Staged:    staged,
-		Unstaged:  unstaged,
-		Untracked: untracked,
-		Ignored:   ignored,
-	}
-}
-
-func calculateTotals(fileStatuses []FileStatus) (staged, unstaged, untracked, ignored int) {
-	for _, fs := range fileStatuses {
-		if Verbose {
-			fmt.Println(fs.Text)
-		}
-
-		if fs.Staged {
-			staged++
-		}
-		if fs.Unstaged {
-			unstaged++
-		}
-		if fs.Untracked {
-			untracked++
-		}
-		if fs.Ignored {
-			ignored++
-		}
-	}
-	return
-}
-
-func createMessage(repositoryStatus RepositoryStatus) string {
+func createMessage(repositoryStatus git.RepositoryStatus, out output.Outputter) string {
 	var message string
 
-	if repositoryStatus.LocalStatus == NotVersioned ||
+	if repositoryStatus.LocalStatus == git.NotVersioned ||
 		repositoryStatus.LocalStatus == repositoryStatus.RemoteStatus {
-		return repositoryStatus.LocalStatus.color.Render(repositoryStatus.LocalStatus.message)
+		return repositoryStatus.LocalStatus.Color.Render(repositoryStatus.LocalStatus.Message)
 	}
 
-	if repositoryStatus.LocalStatus != NoChanges {
-		message = repositoryStatus.LocalStatus.message
+	if repositoryStatus.LocalStatus != git.NoChanges {
+		message = repositoryStatus.LocalStatus.Message
 	}
 
-	if repositoryStatus.RemoteStatus != NoChanges {
+	if repositoryStatus.RemoteStatus != git.NoChanges {
 		if message != "" {
 			message += ", "
 		}
 
-		message = repositoryStatus.RemoteStatus.message
+		message = repositoryStatus.RemoteStatus.Message
 	}
 
-	return warnColor.Render(message)
+	return out.RenderWarn(message)
 }
 
 func init() {

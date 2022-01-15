@@ -5,6 +5,8 @@ Run the following commands across multiple subdirectories:
 * git status
 * git fetch
 * git pull
+* git remote
+* git purge
 
 # Installation
 Get the latest binary from the [Releases](https://github.com/klyall/kl-cli/releases) page.

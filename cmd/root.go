@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -24,13 +25,14 @@ import (
 )
 
 var cfgFile string
+var WorkingDir string
 var Verbose bool
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "kl",
 	Short: "Killer CLI",
-	Long: `Killer CLI (kl) is used to reduce reptitive tasks.
+	Long: `Killer CLI (kl) is used to reduce repetitive tasks.
 * Work across multiple GIT repositories with a single command.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
@@ -46,12 +48,18 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
+	currentDir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.kl.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().StringVarP(&WorkingDir, "working-dir", "w", currentDir, "working directory")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.

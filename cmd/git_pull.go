@@ -16,13 +16,11 @@ limitations under the License.
 package cmd
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"io"
+	"github.com/klyall/kl-cli/pkg/git"
+	"github.com/klyall/kl-cli/pkg/output"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -34,14 +32,22 @@ var pullCmd = &cobra.Command{
 	Long:  `Runs 'git pull' across all sub-directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		rootDir, err := os.Getwd()
+		out := output.SStdOut{
+			Out: os.Stdout,
+		}
 
-		if err != nil {
-			log.Fatal(err)
+		gitPull := git.Pull{
+			Verbose:   Verbose,
+			Outputter: out,
+		}
+
+		gitStatus := git.Status{
+			Verbose:   Verbose,
+			Outputter: out,
 		}
 
 		// Find directories
-		entries, err := os.ReadDir(rootDir)
+		entries, err := os.ReadDir(WorkingDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -55,73 +61,44 @@ var pullCmd = &cobra.Command{
 			repositoryName := entry.Name()
 			var message string
 
-			repositoryDir := filepath.Join(rootDir, repositoryName)
+			repositoryDir := filepath.Join(WorkingDir, repositoryName)
 
-			repositoryStatus, err := ExecuteGitStatus(repositoryDir)
+			if isGitRepository(repositoryDir) {
 
-			if err != nil {
-				message := fmt.Sprintf("%-50s Unable to pull git repository: %s", repositoryName, err.Error())
-				printErrorMessage(message)
-				continue
-			}
-
-			switch {
-			case repositoryStatus.LocalStatus == NotVersioned:
-				message = successColor.Render("Directory is not versioned")
-			case repositoryStatus.LocalStatus == UncommitedChanges:
-				message = errorColor.Render("Uncommited changes prevent pull being done")
-			case repositoryStatus.RemoteStatus == NoChanges:
-				message = successColor.Render("No changes to pull")
-			default:
-				out, err := execGitPull(repositoryDir)
+				repositoryStatus, err := gitStatus.Exec(repositoryDir)
 
 				if err != nil {
 					message := fmt.Sprintf("%-50s Unable to pull git repository: %s", repositoryName, err.Error())
-					printErrorMessage(message)
+					out.Error(message)
 					continue
 				}
 
-				parseGitPullOutput(out)
+				switch {
+				case repositoryStatus.LocalStatus == git.NotVersioned:
+					message = out.RenderSuccess("Directory is not versioned")
+				case repositoryStatus.LocalStatus == git.UncommittedChanges:
+					message = out.RenderError("Uncommitted changes prevent pull being done")
+				case repositoryStatus.RemoteStatus == git.NoChanges:
+					message = out.RenderSuccess("No changes to pull")
+				default:
+					err := gitPull.Exec(repositoryDir)
 
-				message = infoColor.Render("Pull complete")
+					if err != nil {
+						message := fmt.Sprintf("%-50s Unable to pull git repository: %s", repositoryName, err.Error())
+						out.Error(message)
+						continue
+					}
+
+					message = out.RenderInfo("Pull complete")
+				}
+			} else {
+				message = out.RenderError("Not versioned")
 			}
 
 			cliMessage := fmt.Sprintf("%-50s %s", repositoryName, message)
-			printSuccessMessage(cliMessage)
+			out.Success(cliMessage)
 		}
 	},
-}
-
-func execGitPull(path string) (io.Reader, error) {
-	app := "git"
-
-	arg0 := "-C"
-	arg1 := path
-	arg2 := "pull"
-
-	cmd := exec.Command(app, arg0, arg1, arg2)
-
-	if Verbose {
-		fmt.Println(cmd)
-	}
-
-	out, err := cmd.Output()
-
-	return bytes.NewReader(out), err
-}
-
-func parseGitPullOutput(r io.Reader) {
-
-	s := bufio.NewScanner(r)
-
-	if Verbose {
-		s.Scan()
-		line := s.Text()
-
-		if line != "" {
-			fmt.Println(s.Text())
-		}
-	}
 }
 
 func init() {

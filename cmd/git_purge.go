@@ -17,6 +17,8 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/klyall/kl-cli/pkg/git"
+	"github.com/klyall/kl-cli/pkg/output"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,15 +34,22 @@ var purgeCmd = &cobra.Command{
 	Long:  `Removes all local branches that no longer have a valid remote branch.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		rootDir, err := os.Getwd()
-		rootDir = "/Users/klyall/workspaces/kl"
+		out := output.SStdOut{
+			Out: os.Stdout,
+		}
 
-		if err != nil {
-			log.Fatal(err)
+		gitFetch := git.Fetch{
+			Verbose:   Verbose,
+			Outputter: out,
+		}
+
+		gitBranch := git.Branch{
+			Verbose:   Verbose,
+			Outputter: out,
 		}
 
 		// Find directories
-		entries, err := os.ReadDir(rootDir)
+		entries, err := os.ReadDir(WorkingDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -54,30 +63,30 @@ var purgeCmd = &cobra.Command{
 			repositoryName := entry.Name()
 			var message string
 
-			repositoryDir := filepath.Join(rootDir, repositoryName)
+			repositoryDir := filepath.Join(WorkingDir, repositoryName)
 
 			if !isGitRepository(repositoryDir) {
 				continue
 			}
 
-			err := execGitFetchPurge(repositoryDir)
+			err := gitFetch.ExecWithPurge(repositoryDir)
 			if err != nil {
 				message := fmt.Sprintf("%-50s Unable to fetch git repository: %s", repositoryName, err.Error())
-				printErrorMessage(message)
+				out.Error(message)
 				continue
 			}
 
-			remoteBranches, err := execGitBranchRemote(repositoryDir)
+			remoteBranches, err := gitBranch.ExecRemote(repositoryDir)
 			if err != nil {
 				message := fmt.Sprintf("%-50s Unable to retieve remote branches for repository: %s", repositoryName, err.Error())
-				printErrorMessage(message)
+				out.Error(message)
 				continue
 			}
 
-			localBranches, err := execGitBranchVV(repositoryDir)
+			localBranches, err := gitBranch.ExecVV(repositoryDir)
 			if err != nil {
 				message := fmt.Sprintf("%-50s Unable to retieve branches for repository: %s", repositoryName, err.Error())
-				printErrorMessage(message)
+				out.Error(message)
 				continue
 			}
 
@@ -85,33 +94,33 @@ var purgeCmd = &cobra.Command{
 				if lb.RemoteBranchName != "" && !contains(remoteBranches, lb.RemoteBranchName) {
 					if lb.CurrentBranch {
 						msg := fmt.Sprintf("Unable to delete current branch '%s'", lb.LocalBranchName)
-						printErrorMessage(formatMessage(repositoryName, msg))
+						out.Error(formatMessage(repositoryName, msg))
 					} else if dryRun {
 						msg := fmt.Sprintf("Dry Run: %s branch will be deleted", lb.LocalBranchName)
-						printWarnMessage(formatMessage(repositoryName, msg))
+						out.Warn(formatMessage(repositoryName, msg))
 					} else {
-						err := execGitBranchDelete(repositoryDir, lb.LocalBranchName)
+						err := gitBranch.ExecDelete(repositoryDir, lb.LocalBranchName)
 						if err != nil {
 							msg := fmt.Sprintf("Unable to delete local branch '%s': %s", lb.LocalBranchName, err.Error())
 							message := formatMessage(repositoryName, msg)
-							printErrorMessage(message)
+							out.Error(message)
 						} else {
 							msg := fmt.Sprintf("%s branch deleted", lb.LocalBranchName)
-							printSuccessMessage(formatMessage(repositoryName, msg))
+							out.Success(formatMessage(repositoryName, msg))
 						}
 					}
 				}
 			}
 
 			if len(remoteBranches) == 0 {
-				message = infoColor.Render("No remote")
+				message = out.RenderInfo("No remote")
 			} else if dryRun {
-				message = infoColor.Render("Purge Dry Run")
+				message = out.RenderInfo("Purge Dry Run")
 			} else {
-				message = infoColor.Render("Purged")
+				message = out.RenderInfo("Purged")
 			}
 
-			printSuccessMessage(formatMessage(repositoryName, message))
+			out.Success(formatMessage(repositoryName, message))
 		}
 	},
 }
@@ -120,7 +129,7 @@ func formatMessage(repositoryName, message string) string {
 	return fmt.Sprintf("%-50s %s", repositoryName, message)
 }
 
-func contains(r []RemoteBranchName, branch RemoteBranchName) bool {
+func contains(r []git.RemoteBranchName, branch git.RemoteBranchName) bool {
 	for _, b := range r {
 		if b == branch {
 			return true

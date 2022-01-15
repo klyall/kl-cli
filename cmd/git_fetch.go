@@ -16,13 +16,11 @@ limitations under the License.
 package cmd
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"io"
+	"github.com/klyall/kl-cli/pkg/git"
+	"github.com/klyall/kl-cli/pkg/output"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -34,14 +32,17 @@ var fetchCmd = &cobra.Command{
 	Long:  `Runs 'git fetch' across all sub-directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		rootDir, err := os.Getwd()
+		out := output.SStdOut{
+			Out: os.Stdout,
+		}
 
-		if err != nil {
-			log.Fatal(err)
+		gitFetch := git.Fetch{
+			Verbose:   Verbose,
+			Outputter: out,
 		}
 
 		// Find directories
-		entries, err := os.ReadDir(rootDir)
+		entries, err := os.ReadDir(WorkingDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -55,61 +56,27 @@ var fetchCmd = &cobra.Command{
 			repositoryName := entry.Name()
 			var message string
 
-			repositoryDir := filepath.Join(rootDir, repositoryName)
+			repositoryDir := filepath.Join(WorkingDir, repositoryName)
 
 			if isGitRepository(repositoryDir) {
 
-				out, err := execGitFetch(repositoryDir)
+				err := gitFetch.Exec(repositoryDir)
 
 				if err != nil {
 					message := fmt.Sprintf("%-50s Unable to fetch git repository: %s", repositoryName, err.Error())
-					printErrorMessage(message)
+					out.Error(message)
 					continue
 				}
 
-				parseGitFetchOutput(out)
-
-				message = infoColor.Render("Fetch complete")
+				message = out.RenderInfo("Fetch complete")
 			} else {
-				message = errorColor.Render("Not versioned")
+				message = out.RenderError("Not versioned")
 			}
 
 			cliMessage := fmt.Sprintf("%-50s %s", repositoryName, message)
-			printSuccessMessage(cliMessage)
+			out.Success(cliMessage)
 		}
 	},
-}
-
-func execGitFetch(path string) (io.Reader, error) {
-	app := "git"
-
-	arg0 := "-C"
-	arg1 := path
-	arg2 := "fetch"
-
-	cmd := exec.Command(app, arg0, arg1, arg2)
-
-	if Verbose {
-		fmt.Println(cmd)
-	}
-
-	out, err := cmd.Output()
-
-	return bytes.NewReader(out), err
-}
-
-func parseGitFetchOutput(r io.Reader) {
-
-	s := bufio.NewScanner(r)
-
-	if Verbose {
-		s.Scan()
-		line := s.Text()
-
-		if line != "" {
-			fmt.Println(s.Text())
-		}
-	}
 }
 
 func init() {

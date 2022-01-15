@@ -16,18 +16,14 @@ limitations under the License.
 package cmd
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"io"
+	"github.com/gookit/color"
+	"github.com/klyall/kl-cli/pkg/git"
+	"github.com/klyall/kl-cli/pkg/output"
+	"github.com/spf13/cobra"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-
-	"github.com/gookit/color"
-	"github.com/spf13/cobra"
 )
 
 var remoteCmd = &cobra.Command{
@@ -36,16 +32,19 @@ var remoteCmd = &cobra.Command{
 	Long:  `Runs 'git remote' across all sub-directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		error := color.FgRed.Render
-
-		rootDir, err := os.Getwd()
-
-		if err != nil {
-			log.Fatal(err)
+		out := output.SStdOut{
+			Out: os.Stdout,
 		}
 
+		gitRemote := git.Remote{
+			Verbose:   Verbose,
+			Outputter: out,
+		}
+
+		error := color.FgRed.Render
+
 		// Find directories
-		entries, err := os.ReadDir(rootDir)
+		entries, err := os.ReadDir(WorkingDir)
 
 		if err != nil {
 			log.Fatal(err)
@@ -61,26 +60,24 @@ var remoteCmd = &cobra.Command{
 
 			repositoryName := entry.Name()
 
-			repositoryDir := filepath.Join(rootDir, repositoryName)
+			repositoryDir := filepath.Join(WorkingDir, repositoryName)
 
 			if isGitRepository(repositoryDir) {
 
-				out, err := execGitRemote(repositoryDir)
-
+				remote, err := gitRemote.Exec(repositoryDir)
 				if err != nil {
 					message := fmt.Sprintf("%-50s Unable to fetch git repository: %s", repositoryName, err.Error())
-					printErrorMessage(message)
+					out.Error(message)
 					continue
 				}
-				fetch, push := parseGitRemoteOutput(out)
 
 				switch {
-				case fetch == "":
-					message = infoColor.Render("No remote")
-				case fetch != push:
-					message = warnColor.Render("Remotes mismatch: %s (fetch) %S (push)", fetch, push)
+				case remote.Fetch == "":
+					message = out.RenderInfo("No remote")
+				case remote.Fetch != remote.Push:
+					message = out.RenderWarn("Remotes mismatch: %s (fetch) %S (push)", remote.Fetch, remote.Push)
 				default:
-					message = fetch
+					message = remote.Fetch
 				}
 
 			} else {
@@ -88,54 +85,9 @@ var remoteCmd = &cobra.Command{
 			}
 
 			cliMessage := fmt.Sprintf("%-50s %s", repositoryName, message)
-			printSuccessMessage(cliMessage)
+			out.Success(cliMessage)
 		}
 	},
-}
-
-func execGitRemote(path string) (io.Reader, error) {
-	app := "git"
-
-	arg0 := "-C"
-	arg1 := path
-	arg2 := "remote"
-	arg3 := "-v"
-
-	cmd := exec.Command(app, arg0, arg1, arg2, arg3)
-
-	if Verbose {
-		fmt.Println(cmd)
-	}
-
-	out, err := cmd.Output()
-
-	return bytes.NewReader(out), err
-}
-
-func parseGitRemoteOutput(r io.Reader) (string, string) {
-
-	s := bufio.NewScanner(r)
-
-	s.Scan()
-	fetch := parseGitRemoteLine(s.Text())
-	s.Scan()
-	push := parseGitRemoteLine(s.Text())
-
-	return fetch, push
-}
-
-func parseGitRemoteLine(line string) string {
-	if len(line) == 0 {
-		return ""
-	}
-
-	s := bufio.NewScanner(strings.NewReader(line))
-	s.Split(bufio.ScanWords)
-
-	s.Scan()
-	s.Scan()
-
-	return s.Text()
 }
 
 func init() {
